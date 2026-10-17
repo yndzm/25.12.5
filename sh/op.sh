@@ -1,5 +1,5 @@
 #!/bin/bash
-# === 修复：通用稀疏克隆函数，支持单包仓库 ===
+# 稀疏克隆工具：仅拉取仓库指定子目录，使用临时目录避免重名冲突
 function git_sparse_clone() {
   branch="$1" repourl="$2" && shift 2
   tmpdir=".sparse_clone_$(date +%s)"
@@ -28,11 +28,10 @@ grep HASH target/linux/generic/kernel-6.12 | awk -F'HASH-' '{print $2}' | awk '{
 git clone -b packages --depth 1 --single-branch https://github.com/shiyu1314/openwrt-feeds package/xd
 git clone -b porxy --depth 1 --single-branch https://github.com/shiyu1314/openwrt-feeds package/porxy
 
-# 清理第三方 feed 里的 adguardhome 相关包（前端+核心都删，避免冲突）
+# 清理第三方 feed 里的 adguardhome 相关包，避免同名冲突
 rm -rf package/xd/*adguardhome* package/porxy/*adguardhome*
 
-# mihomo-alpha 与 mihomo-meta 因 PROVIDES/VARIANT/CONFLICTS 互指，
-# 在 OpenWrt 25.12 下生成 Kconfig 递归依赖，导致 make defconfig 失败
+# mihomo-alpha 与 mihomo-meta 依赖冲突修复
 rm -rf package/porxy/mihomo-alpha package/porxy/mihomo-meta
 
 [ -f package/xd/smartdns/Makefile ] && sed -i -E \
@@ -41,7 +40,7 @@ rm -rf package/porxy/mihomo-alpha package/porxy/mihomo-meta
   -e 's/[[:space:]]*PACKAGE_smartdns-ui://g' \
   package/xd/smartdns/Makefile
 
-# Use QiuSimons' newer daed/luci-app-daed packages
+# QiuSimons daed/luci-app-daed 包替换
 rm -rf package/porxy/daed package/porxy/luci-app-daed
 rm -rf qiu-luci-app-daed
 git clone --depth=1 -b kix --single-branch --filter=blob:none --sparse https://github.com/QiuSimons/luci-app-daed qiu-luci-app-daed
@@ -51,14 +50,14 @@ popd
 mv -f qiu-luci-app-daed/daed qiu-luci-app-daed/luci-app-daed package/porxy/
 rm -rf qiu-luci-app-daed
 
-# Pin daed pnpm version
+# Pin daed pnpm 版本
 sed -i 's/npm install -g pnpm/npm install -g pnpm@10.24.0/' package/porxy/daed/Makefile
 grep -Fq 'npm install -g pnpm@10.24.0' package/porxy/daed/Makefile || {
   echo "ERROR: failed to pin daed pnpm version"
   exit 1
 }
 
-# Fix daed web build
+# Fix daed web 构建逻辑
 python3 - <<'PY'
 from pathlib import Path
 path = Path("package/porxy/daed/Makefile")
@@ -124,13 +123,13 @@ grep -Fq 'browser-side bare module imports' package/porxy/daed/Makefile || {
   exit 1
 }
 
-# Fix daed HTTPS iframe protocol
+# Fix daed HTTPS iframe 协议问题
 if [ -f package/porxy/luci-app-daed/luasrc/view/daed/daed.htm ]; then
   sed -i "s/var protocol = window.location.protocol;/var protocol = 'http:';/" \
     package/porxy/luci-app-daed/luasrc/view/daed/daed.htm
 fi
 
-# Keep uncompressed daed dashboard assets
+# 保留未压缩的 daed 前端资源
 python3 - <<'PY'
 from pathlib import Path
 path = Path("package/porxy/daed/Makefile")
@@ -162,10 +161,10 @@ if grep -Fq 'webrender/web -type f -size +4k' package/porxy/daed/Makefile; then
 fi
 
 rm -rf feeds/luci/applications/{luci-app-dockerman,luci-app-samba4,luci-app-aria2,luci-app-diskman,luci-app-mosdns}
-# 删除 feeds 里的 adguardhome 核心包，不预装核心
+# 删除 feeds 中的 adguardhome 核心包，不预装核心
 rm -rf feeds/packages/net/{samba4,v2ray-geodata,mosdns,sing-box,aria2,ariang,lucky,adguardhome}
 
-# Vantage LuCI theme
+# Vantage LuCI 主题
 rm -rf package/luci-theme-vantage package/luci-app-vantage vantage-repo
 git clone --depth=1 --single-branch --filter=blob:none --sparse https://github.com/anothaDev/luci-theme-vantage vantage-repo
 pushd vantage-repo || exit 1
@@ -174,7 +173,7 @@ popd
 mv -f vantage-repo/luci-theme-vantage vantage-repo/luci-app-vantage package/
 rm -rf vantage-repo
 
-# drop attendedsysupgrade
+# 移除 attendedsysupgrade
 sed -i '/luci-app-attendedsysupgrade/d' \
     feeds/luci/collections/luci-nginx/Makefile \
     feeds/luci/collections/luci-ssl-openssl/Makefile \
@@ -207,7 +206,7 @@ for patch in *.patch; do
     }
 done
 
-# rust
+# rust 版本锁定
 RUST_VERSION=1.95.0
 RUST_HASH=62b67230754da642a264ca0cb9fc08820c54e2ed7b3baba0289876d4cdb48c08
 sed -ri "s/(PKG_VERSION:=)[^\"]*/\1$RUST_VERSION/;s/(PKG_HASH:=)[^\"]*/\1$RUST_HASH/" feeds/packages/lang/rust/Makefile
@@ -228,39 +227,39 @@ git clone https://github.com/sbwml/package_libs_nghttp3 package/libs/nghttp3
 rm -rf feeds/packages/libs/ngtcp2
 git clone https://github.com/sbwml/package_libs_ngtcp2 package/libs/ngtcp2
 
-# curl - fix passwall time_pretransfer check
+# curl 修复
 rm -rf feeds/packages/net/curl
 git clone https://github.com/sbwml/feeds_packages_net_curl feeds/packages/net/curl
 
-# nginx - latest version
+# nginx 最新版
 rm -rf feeds/packages/net/nginx
 git clone https://github.com/sbwml/feeds_packages_net_nginx feeds/packages/net/nginx -b openwrt-25.12
 sed -i 's/procd_set_param stdout 1/procd_set_param stdout 0/g;s/procd_set_param stderr 1/procd_set_param stderr 0/g' feeds/packages/net/nginx/files/nginx.init
 
-# nginx - ubus
+# nginx ubus 调优
 sed -i 's/ubus_parallel_req 2/ubus_parallel_req 6/g' feeds/packages/net/nginx/files-luci-support/60_nginx-luci-support
 sed -i '/ubus_parallel_req/a\        ubus_script_timeout 300;' feeds/packages/net/nginx/files-luci-support/60_nginx-luci-support
 
 # nginx-util
 sed -i '/\/etc\/nginx\/uci.conf.template/d' feeds/packages/net/nginx-util/Makefile
 
-# uwsgi - fix timeout
+# uwsgi 超时修复
 sed -i '$a cgi-timeout = 600' feeds/packages/net/uwsgi/files-luci-support/luci-*.ini
 sed -i '/limit-as/c\limit-as = 500' feeds/packages/net/uwsgi/files-luci-support/luci-webui.ini
 
-# disable error log
+# 关闭 uwsgi 错误日志
 sed -i "s/procd_set_param stderr 1/procd_set_param stderr 0/g" feeds/packages/net/uwsgi/files/uwsgi.init
 
-# uwsgi - performance
+# uwsgi 性能调优
 sed -i 's/threads = 1/threads = 2/g' feeds/packages/net/uwsgi/files-luci-support/luci-webui.ini
 sed -i 's/processes = 3/processes = 4/g' feeds/packages/net/uwsgi/files-luci-support/luci-webui.ini
 sed -i 's/cheaper = 1/cheaper = 2/g' feeds/packages/net/uwsgi/files-luci-support/luci-webui.ini
 
-# rpcd - fix timeout
+# rpcd 超时修复
 sed -i 's/option timeout 30/option timeout 60/g' package/system/rpcd/files/rpcd.config
 sed -i 's#20) \* 1000#60) \* 1000#g' feeds/luci/modules/luci-base/htdocs/luci-static/resources/rpc.js
 
-# luci-compat - remove extra line breaks
+# luci-compat 修复
 sed -i '/<br \/>/d' feeds/luci/modules/luci-compat/luasrc/view/cbi/full_valuefooter.htm
 
 # mosdns
@@ -276,7 +275,7 @@ git clone https://github.com/sirpdboy/luci-app-lucky.git package/luci-app-lucky
 # ========== feeds 操作 ==========
 ./scripts/feeds update -a
 
-# 清理 feeds 里所有 adguardhome 相关
+# 清理 feeds 中所有 adguardhome 相关
 find feeds/ -type d -name "*adguardhome*" -exec rm -rf {} +
 rm -rf feeds/luci/applications/luci-app-adguardhome
 rm -rf feeds/packages/net/adguardhome
@@ -289,10 +288,11 @@ find package/feeds -type d -name "*adguardhome*" -exec rm -rf {} +
 
 # ========== 自定义包：terrytyc版luci-app-adguardhome ==========
 rm -rf package/luci-app-adguardhome
-# === 修复：单包仓库直接完整克隆，不使用稀疏检出 ===
-git clone --depth=1 -b main --single-branch https://github.com/terrytyc/luci-app-adguardhome package/luci-app-adguardhome
+# 精准检出仓库内的 luci-app-adguardhome 子目录到 package 下
+git_sparse_clone main https://github.com/terrytyc/luci-app-adguardhome luci-app-adguardhome
+mv -f luci-app-adguardhome package/
 
-# === 彻底移除所有字段中的 adguardhome 核心包依赖 ===
+# 移除对系统 adguardhome 核心包的依赖，仅保留前端界面
 sed -i -E \
   -e 's/[[:space:]]*\+adguardhome//g' \
   -e 's/adguardhome[[:space:]]*//g' \
@@ -309,10 +309,6 @@ ls package/luci-app-adguardhome/Makefile || {
 ls package/luci-app-adguardhome/luasrc/controller/*.lua || {
   echo "ERROR: luci-app-adguardhome 前端文件缺失"
   exit 1
-}
-# 确认无核心包依赖
-grep -q "adguardhome" package/luci-app-adguardhome/Makefile && {
-  echo "WARNING: Makefile 中仍有 adguardhome 相关引用，继续尝试编译"
 }
 # =======================================================================
 
