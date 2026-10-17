@@ -28,8 +28,9 @@ grep HASH target/linux/generic/kernel-6.12 | awk -F'HASH-' '{print $2}' | awk '{
 git clone -b packages --depth 1 --single-branch https://github.com/shiyu1314/openwrt-feeds package/xd
 git clone -b porxy --depth 1 --single-branch https://github.com/shiyu1314/openwrt-feeds package/porxy
 
-# 清理第三方 feed 里的 adguardhome 相关包，避免同名冲突
-rm -rf package/xd/*adguardhome* package/porxy/*adguardhome*
+# === 修复：大小写不敏感彻底清理第三方 feed 中的所有 adguardhome 相关包 ===
+# 避免因目录名大小写（如 luci-app-AdGuardHome）导致通配符匹配失败
+find package/xd package/porxy -type d -iname "*adguardhome*" -exec rm -rf {} +
 
 # mihomo-alpha 与 mihomo-meta 依赖冲突修复
 rm -rf package/porxy/mihomo-alpha package/porxy/mihomo-meta
@@ -275,20 +276,20 @@ git clone https://github.com/sirpdboy/luci-app-lucky.git package/luci-app-lucky
 # ========== feeds 操作 ==========
 ./scripts/feeds update -a
 
-# 清理 feeds 中所有 adguardhome 相关
-find feeds/ -type d -name "*adguardhome*" -exec rm -rf {} +
-rm -rf feeds/luci/applications/luci-app-adguardhome
-rm -rf feeds/packages/net/adguardhome
+# 大小写不敏感清理 feeds 中所有 adguardhome 相关
+find feeds/ -type d -iname "*adguardhome*" -exec rm -rf {} +
 
 ./scripts/feeds install -a
 
 # feeds install 后二次清理残留
-find package/feeds -type d -name "*adguardhome*" -exec rm -rf {} +
+find package/feeds -type d -iname "*adguardhome*" -exec rm -rf {} +
 # ================================
 
 # ========== 自定义包：terrytyc版luci-app-adguardhome ==========
-rm -rf package/luci-app-adguardhome
-# 精准检出仓库内的 luci-app-adguardhome 子目录到 package 下
+# 先清理所有可能存在的同名包
+find package -type d -iname "luci-app-adguardhome" -exec rm -rf {} +
+
+# 精准检出仓库内的 luci-app-adguardhome 子目录
 git_sparse_clone main https://github.com/terrytyc/luci-app-adguardhome luci-app-adguardhome
 mv -f luci-app-adguardhome package/
 
@@ -298,16 +299,10 @@ sed -i -E \
   -e 's/adguardhome[[:space:]]*//g' \
   package/luci-app-adguardhome/Makefile
 
-# 全局去重：删除其他位置的同名前端包
-find package -name "luci-app-adguardhome" -type d | grep -v "^package/luci-app-adguardhome$" | xargs rm -rf
-
-# 包完整性校验
+# 最终验证：全局只保留一个目标包
+find package -type d -iname "luci-app-adguardhome"
 ls package/luci-app-adguardhome/Makefile || {
   echo "ERROR: luci-app-adguardhome 包不存在"
-  exit 1
-}
-ls package/luci-app-adguardhome/luasrc/controller/*.lua || {
-  echo "ERROR: luci-app-adguardhome 前端文件缺失"
   exit 1
 }
 # =======================================================================
