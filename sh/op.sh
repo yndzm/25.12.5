@@ -27,8 +27,8 @@ grep HASH target/linux/generic/kernel-6.12 | awk -F'HASH-' '{print $2}' | awk '{
 git clone -b packages --depth 1 --single-branch https://github.com/shiyu1314/openwrt-feeds package/xd
 git clone -b porxy --depth 1 --single-branch https://github.com/shiyu1314/openwrt-feeds package/porxy
 
-# 只清理第三方 feed 里的 luci-app-adguardhome 前端，保留 adguardhome 核心
-rm -rf package/xd/*luci-app-adguardhome* package/porxy/*luci-app-adguardhome*
+# 清理第三方 feed 里的 adguardhome 相关包（前端+核心都删，避免冲突）
+rm -rf package/xd/*adguardhome* package/porxy/*adguardhome*
 
 # mihomo-alpha 与 mihomo-meta 因 PROVIDES/VARIANT/CONFLICTS 互指，
 # 在 OpenWrt 25.12 下生成 Kconfig 递归依赖（recursive dependency），导致 make defconfig 失败。
@@ -175,8 +175,8 @@ if grep -Fq 'webrender/web -type f -size +4k' package/porxy/daed/Makefile; then
 fi
 
 rm -rf feeds/luci/applications/{luci-app-dockerman,luci-app-samba4,luci-app-aria2,luci-app-diskman,luci-app-mosdns}
-# 只删除前端包，保留 adguardhome 核心包
-rm -rf feeds/packages/net/{samba4,v2ray-geodata,mosdns,sing-box,aria2,ariang,lucky}
+# 完整删除 feeds 里的 adguardhome 核心包，不需要系统预装
+rm -rf feeds/packages/net/{samba4,v2ray-geodata,mosdns,sing-box,aria2,ariang,lucky,adguardhome}
 
 # Vantage LuCI theme + dashboard (replaces luci-theme-m3e)
 rm -rf package/luci-theme-vantage package/luci-app-vantage vantage-repo
@@ -289,14 +289,15 @@ git clone https://github.com/sirpdboy/luci-app-lucky.git package/luci-app-lucky
 # ========== feeds 操作 ==========
 ./scripts/feeds update -a
 
-# 只清理 feeds 里旧的 luci-app-adguardhome 前端，保留 adguardhome 核心
-find feeds/ -type d -name "luci-app-adguardhome" -exec rm -rf {} +
+# 清理 feeds 里所有 adguardhome 相关（前端+核心）
+find feeds/ -type d -name "*adguardhome*" -exec rm -rf {} +
 rm -rf feeds/luci/applications/luci-app-adguardhome
+rm -rf feeds/packages/net/adguardhome
 
 ./scripts/feeds install -a
 
-# feeds install 后只清理前端包残留，保留核心包
-find package/feeds -type d -name "luci-app-adguardhome" -exec rm -rf {} +
+# feeds install 后二次清理残留的 adguardhome 相关
+find package/feeds -type d -name "*adguardhome*" -exec rm -rf {} +
 # ================================
 
 # ========== 自定义包：terrytyc版luci-app-adguardhome ==========
@@ -304,12 +305,20 @@ rm -rf package/luci-app-adguardhome
 git_sparse_clone main https://github.com/terrytyc/luci-app-adguardhome luci-app-adguardhome
 mv -f luci-app-adguardhome package/
 
-# 全局去重：只删除其他位置的 luci-app-adguardhome 前端，不碰 adguardhome 核心
+# === 核心修改：移除对系统 adguardhome 核心包的依赖 ===
+# 让前端可以独立编译，核心由插件自身的更新功能管理
+sed -i 's/+adguardhome//g' package/luci-app-adguardhome/Makefile
+
+# 全局去重：删除所有其他位置的同名前端包
 find package -name "luci-app-adguardhome" -type d | grep -v "^package/luci-app-adguardhome$" | xargs rm -rf
 
-# 验证包是否存在，失败直接退出
+# 验证包存在且依赖已移除
 ls package/luci-app-adguardhome/Makefile || {
-  echo "ERROR: luci-app-adguardhome 包不存在，克隆失败"
+  echo "ERROR: luci-app-adguardhome 包不存在"
+  exit 1
+}
+grep -q "adguardhome" package/luci-app-adguardhome/Makefile && {
+  echo "ERROR: 仍存在 adguardhome 依赖，移除失败"
   exit 1
 }
 # =======================================================================
