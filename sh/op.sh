@@ -1,11 +1,13 @@
 #!/bin/bash
+# === 修复：git_sparse_clone 重名冲突问题 ===
 function git_sparse_clone() {
   branch="$1" repourl="$2" && shift 2
-  git clone --depth=1 -b $branch --single-branch --filter=blob:none --sparse $repourl
-  repodir=$(echo $repourl | awk -F '/' '{print $(NF)}')
-  cd $repodir && git sparse-checkout set $@
+  # 使用临时目录克隆，避免仓库名与子目录重名冲突
+  tmpdir=".sparse_clone_$(date +%s)"
+  git clone --depth=1 -b $branch --single-branch --filter=blob:none --sparse $repourl $tmpdir
+  cd $tmpdir && git sparse-checkout set $@
   mv -f $@ ../
-  cd .. && rm -rf $repodir
+  cd .. && rm -rf $tmpdir
 }
 set -x
 apply_patch_once() {
@@ -31,8 +33,7 @@ git clone -b porxy --depth 1 --single-branch https://github.com/shiyu1314/openwr
 rm -rf package/xd/*adguardhome* package/porxy/*adguardhome*
 
 # mihomo-alpha 与 mihomo-meta 因 PROVIDES/VARIANT/CONFLICTS 互指，
-# 在 OpenWrt 25.12 下生成 Kconfig 递归依赖（recursive dependency），导致 make defconfig 失败。
-# 配置中未选用这两个包，直接移除。
+# 在 OpenWrt 25.12 下生成 Kconfig 递归依赖，导致 make defconfig 失败
 rm -rf package/porxy/mihomo-alpha package/porxy/mihomo-meta
 
 [ -f package/xd/smartdns/Makefile ] && sed -i -E \
@@ -41,8 +42,7 @@ rm -rf package/porxy/mihomo-alpha package/porxy/mihomo-meta
   -e 's/[[:space:]]*PACKAGE_smartdns-ui://g' \
   package/xd/smartdns/Makefile
 
-# Use QiuSimons' newer daed/luci-app-daed packages while keeping package names
-# compatible with the existing luci-app-daed selection.
+# Use QiuSimons' newer daed/luci-app-daed packages
 rm -rf package/porxy/daed package/porxy/luci-app-daed
 rm -rf qiu-luci-app-daed
 git clone --depth=1 -b kix --single-branch --filter=blob:none --sparse https://github.com/QiuSimons/luci-app-daed qiu-luci-app-daed
@@ -52,20 +52,14 @@ popd
 mv -f qiu-luci-app-daed/daed qiu-luci-app-daed/luci-app-daed package/porxy/
 rm -rf qiu-luci-app-daed
 
-# Match daeuniverse/daed's declared package manager. Floating to latest pnpm
-# can change lifecycle-script handling and make the frontend build flaky.
+# Pin daed pnpm version
 sed -i 's/npm install -g pnpm/npm install -g pnpm@10.24.0/' package/porxy/daed/Makefile
 grep -Fq 'npm install -g pnpm@10.24.0' package/porxy/daed/Makefile || {
   echo "ERROR: failed to pin daed pnpm version"
   exit 1
 }
 
-# QiuSimons' current daed package builds the upstream monorepo with
-# `pnpm build --filter daed`, which can leave apps/web/dist empty or leave
-# workspace packages as browser-side bare imports. dae-wing embeds
-# webrender/web at Go compile time, so install the pnpm workspace deps, build
-# the shared web packages first, build apps/web explicitly, and fail early with
-# diagnostics if assets are still missing or cannot run standalone in a browser.
+# Fix daed web build
 python3 - <<'PY'
 from pathlib import Path
 path = Path("package/porxy/daed/Makefile")
@@ -131,19 +125,13 @@ grep -Fq 'browser-side bare module imports' package/porxy/daed/Makefile || {
   exit 1
 }
 
-# daed listens on plain HTTP by default. If LuCI is opened over HTTPS, the
-# upstream iframe helper inherits the HTTPS scheme and points the browser at
-# https://router:2023, which fails because daed is not serving TLS.
+# Fix daed HTTPS iframe protocol
 if [ -f package/porxy/luci-app-daed/luasrc/view/daed/daed.htm ]; then
   sed -i "s/var protocol = window.location.protocol;/var protocol = 'http:';/" \
     package/porxy/luci-app-daed/luasrc/view/daed/daed.htm
 fi
 
-# Keep the original daed dashboard assets embedded in dae-wing. QiuSimons'
-# Makefile gzips larger JS/CSS assets and may remove the original files; on
-# some builds the embedded dashboard then opens as a blank white page because
-# the internal HTTP server/browser path does not serve those compressed assets
-# correctly.
+# Keep uncompressed daed dashboard assets
 python3 - <<'PY'
 from pathlib import Path
 path = Path("package/porxy/daed/Makefile")
@@ -175,10 +163,10 @@ if grep -Fq 'webrender/web -type f -size +4k' package/porxy/daed/Makefile; then
 fi
 
 rm -rf feeds/luci/applications/{luci-app-dockerman,luci-app-samba4,luci-app-aria2,luci-app-diskman,luci-app-mosdns}
-# 完整删除 feeds 里的 adguardhome 核心包，不需要系统预装
+# 删除 feeds 里的 adguardhome 核心包，不预装核心
 rm -rf feeds/packages/net/{samba4,v2ray-geodata,mosdns,sing-box,aria2,ariang,lucky,adguardhome}
 
-# Vantage LuCI theme + dashboard (replaces luci-theme-m3e)
+# Vantage LuCI theme
 rm -rf package/luci-theme-vantage package/luci-app-vantage vantage-repo
 git clone --depth=1 --single-branch --filter=blob:none --sparse https://github.com/anothaDev/luci-theme-vantage vantage-repo
 pushd vantage-repo || exit 1
@@ -241,7 +229,7 @@ git clone https://github.com/sbwml/package_libs_nghttp3 package/libs/nghttp3
 rm -rf feeds/packages/libs/ngtcp2
 git clone https://github.com/sbwml/package_libs_ngtcp2 package/libs/ngtcp2
 
-# curl - fix passwall `time_pretransfer` check
+# curl - fix passwall time_pretransfer check
 rm -rf feeds/packages/net/curl
 git clone https://github.com/sbwml/feeds_packages_net_curl feeds/packages/net/curl
 
@@ -273,7 +261,7 @@ sed -i 's/cheaper = 1/cheaper = 2/g' feeds/packages/net/uwsgi/files-luci-support
 sed -i 's/option timeout 30/option timeout 60/g' package/system/rpcd/files/rpcd.config
 sed -i 's#20) \* 1000#60) \* 1000#g' feeds/luci/modules/luci-base/htdocs/luci-static/resources/rpc.js
 
-# luci-compat - remove extra line breaks from description
+# luci-compat - remove extra line breaks
 sed -i '/<br \/>/d' feeds/luci/modules/luci-compat/luasrc/view/cbi/full_valuefooter.htm
 
 # mosdns
@@ -282,21 +270,21 @@ find ./ | grep Makefile | grep mosdns | xargs rm -f
 git clone https://github.com/sbwml/luci-app-mosdns -b v5 package/mosdns
 git clone https://github.com/sbwml/v2ray-geodata package/v2ray-geodata
 
-# Lucky (只拉取指定分支)
+# Lucky
 rm -rf package/luci-app-lucky
 git clone https://github.com/sirpdboy/luci-app-lucky.git package/luci-app-lucky
 
 # ========== feeds 操作 ==========
 ./scripts/feeds update -a
 
-# 清理 feeds 里所有 adguardhome 相关（前端+核心）
+# 清理 feeds 里所有 adguardhome 相关
 find feeds/ -type d -name "*adguardhome*" -exec rm -rf {} +
 rm -rf feeds/luci/applications/luci-app-adguardhome
 rm -rf feeds/packages/net/adguardhome
 
 ./scripts/feeds install -a
 
-# feeds install 后二次清理残留的 adguardhome 相关
+# feeds install 后二次清理残留
 find package/feeds -type d -name "*adguardhome*" -exec rm -rf {} +
 # ================================
 
@@ -305,11 +293,10 @@ rm -rf package/luci-app-adguardhome
 git_sparse_clone main https://github.com/terrytyc/luci-app-adguardhome luci-app-adguardhome
 mv -f luci-app-adguardhome package/
 
-# === 核心修改：移除对系统 adguardhome 核心包的依赖 ===
-# 让前端可以独立编译，核心由插件自身的更新功能管理
+# 移除对系统 adguardhome 核心包的依赖，仅保留前端界面
 sed -i 's/+adguardhome//g' package/luci-app-adguardhome/Makefile
 
-# 全局去重：删除所有其他位置的同名前端包
+# 全局去重：删除其他位置的同名前端包
 find package -name "luci-app-adguardhome" -type d | grep -v "^package/luci-app-adguardhome$" | xargs rm -rf
 
 # 验证包存在且依赖已移除
@@ -317,17 +304,17 @@ ls package/luci-app-adguardhome/Makefile || {
   echo "ERROR: luci-app-adguardhome 包不存在"
   exit 1
 }
-grep -q "adguardhome" package/luci-app-adguardhome/Makefile && {
+grep -q "+adguardhome" package/luci-app-adguardhome/Makefile && {
   echo "ERROR: 仍存在 adguardhome 依赖，移除失败"
   exit 1
 }
 # =======================================================================
 
-#golang 26.x
+# golang 26.x
 rm -rf feeds/packages/lang/golang
 git clone https://github.com/sbwml/packages_lang_golang -b 26.x feeds/packages/lang/golang
 
-# luci-app-mosdns：替换busybox wget为curl，解决本地API调用2.6秒延迟
+# luci-app-mosdns：替换 wget 为 curl 修复延迟
 sed -i 's/wget -q -O - ${post_flag}/curl -s -o - ${post_flag}/' package/mosdns/luci-app-mosdns/root/usr/share/rpcd/ucode/luci.mosdns
 sed -i 's/exec_sys(`wget -q -O -/exec_sys(`curl -s -o -/' package/mosdns/luci-app-mosdns/root/usr/share/rpcd/ucode/luci.mosdns
 sed -i 's/--post-data=""/-d ""/' package/mosdns/luci-app-mosdns/root/usr/share/rpcd/ucode/luci.mosdns
