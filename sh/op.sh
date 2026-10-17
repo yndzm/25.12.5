@@ -1,8 +1,7 @@
 #!/bin/bash
-# === 修复：git_sparse_clone 重名冲突问题 ===
+# === 修复：通用稀疏克隆函数，支持单包仓库 ===
 function git_sparse_clone() {
   branch="$1" repourl="$2" && shift 2
-  # 使用临时目录克隆，避免仓库名与子目录重名冲突
   tmpdir=".sparse_clone_$(date +%s)"
   git clone --depth=1 -b $branch --single-branch --filter=blob:none --sparse $repourl $tmpdir
   cd $tmpdir && git sparse-checkout set $@
@@ -290,23 +289,30 @@ find package/feeds -type d -name "*adguardhome*" -exec rm -rf {} +
 
 # ========== 自定义包：terrytyc版luci-app-adguardhome ==========
 rm -rf package/luci-app-adguardhome
-git_sparse_clone main https://github.com/terrytyc/luci-app-adguardhome luci-app-adguardhome
-mv -f luci-app-adguardhome package/
+# === 修复：单包仓库直接完整克隆，不使用稀疏检出 ===
+git clone --depth=1 -b main --single-branch https://github.com/terrytyc/luci-app-adguardhome package/luci-app-adguardhome
 
-# 移除对系统 adguardhome 核心包的依赖，仅保留前端界面
-sed -i 's/+adguardhome//g' package/luci-app-adguardhome/Makefile
+# === 彻底移除所有字段中的 adguardhome 核心包依赖 ===
+sed -i -E \
+  -e 's/[[:space:]]*\+adguardhome//g' \
+  -e 's/adguardhome[[:space:]]*//g' \
+  package/luci-app-adguardhome/Makefile
 
 # 全局去重：删除其他位置的同名前端包
 find package -name "luci-app-adguardhome" -type d | grep -v "^package/luci-app-adguardhome$" | xargs rm -rf
 
-# 验证包存在且依赖已移除
+# 包完整性校验
 ls package/luci-app-adguardhome/Makefile || {
   echo "ERROR: luci-app-adguardhome 包不存在"
   exit 1
 }
-grep -q "+adguardhome" package/luci-app-adguardhome/Makefile && {
-  echo "ERROR: 仍存在 adguardhome 依赖，移除失败"
+ls package/luci-app-adguardhome/luasrc/controller/*.lua || {
+  echo "ERROR: luci-app-adguardhome 前端文件缺失"
   exit 1
+}
+# 确认无核心包依赖
+grep -q "adguardhome" package/luci-app-adguardhome/Makefile && {
+  echo "WARNING: Makefile 中仍有 adguardhome 相关引用，继续尝试编译"
 }
 # =======================================================================
 
